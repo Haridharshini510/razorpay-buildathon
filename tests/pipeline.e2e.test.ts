@@ -44,6 +44,14 @@ vi.mock("../src/lib/razorpay", () => ({
         status: "created",
       }),
     },
+    orders: {
+      create: vi.fn().mockResolvedValue({
+        id: "order_e2e_456",
+        amount: 50000,
+        currency: "INR",
+        status: "created",
+      }),
+    },
   }),
 }));
 
