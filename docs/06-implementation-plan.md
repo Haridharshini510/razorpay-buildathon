@@ -15,8 +15,8 @@
 - [ ] Set up MongoDB connection (Mongoose) — local Docker or Atlas free tier
 - [ ] Set up Redis (local Docker) + BullMQ
 - [ ] Create Mongoose models (recovery_cases, audit_logs, batches, system_config)
-- [ ] Set up `.env.local` with Razorpay test keys + Claude API key
-- [ ] Install dependencies: `razorpay`, `mongoose`, `@anthropic-ai/sdk`, `bullmq`, `ioredis`
+- [x] Set up `.env.local` with Razorpay test keys + Gemini API key
+- [x] Install dependencies: `razorpay`, `mongoose`, `@google/generative-ai`, `bullmq`, `ioredis`
 - [ ] Set up `docker-compose.yml` for MongoDB + Redis
 
 ### Afternoon: Core Pipeline + Stopping Rules + Tests
@@ -53,14 +53,14 @@
 
 ### Morning: Diagnostic Engine
 
-- [ ] Set up Anthropic SDK client
-- [ ] Define tool_use schema for `diagnose_failure`:
+- [x] Set up Gemini SDK client
+- [x] Define structured output schema for `diagnose_failure`:
   - Constrained enum for root_cause
   - confidence (0-1), reasoning, recoverable, suggested_wait_minutes
 - [ ] Write system prompt for root cause diagnosis (this is the critical prompt — iterate)
 - [ ] Build `diagnose(failureEvent)` function:
   - Constructs user message from event data
-  - Calls Claude with tool_use + tool_choice
+  - Calls Gemini with JSON-only prompt
   - Returns typed diagnosis object
 - [ ] Build fallback diagnosis (rule-based mapping) for when LLM is unavailable
 - [ ] **Create test suite: 10 hand-crafted failure scenarios with expected diagnoses**
@@ -69,13 +69,13 @@
 
 ### Afternoon: Intervention Selector
 
-- [ ] Define tool_use schema for `select_intervention`:
+- [x] Define structured output schema for `select_intervention`:
   - action enum: immediate_retry, delayed_retry, alternate_method, payment_link, customer_nudge, stop
   - method, delay_minutes, reasoning, fallback_action
 - [ ] Write system prompt for intervention selection
 - [ ] Build `selectIntervention(diagnosis, context)` function:
   - Constructs prompt with diagnosis + context
-  - Calls Claude with tool_use
+  - Calls Gemini with JSON-only prompt
   - Validates output against allowed actions
   - Returns intervention plan
 - [ ] Build fallback intervention selection (root_cause → default action mapping)
@@ -286,7 +286,7 @@
   - Key design decisions:
     - AI boundary (what's AI, what's not, and WHY)
     - BullMQ for delayed retries (why not setTimeout)
-    - tool_use for structured output (why not raw JSON prompting)
+    - Gemini for structured AI output with JSON-constrained prompts
     - Stopping rules are never AI-overridable
   - Demo instructions (single "Run Simulation" click)
   - Results from test runs (screenshots + metrics)
@@ -356,7 +356,7 @@ razorpay-buildathon/
 │   ├── lib/
 │   │   ├── db.ts                     — MongoDB/Mongoose connection
 │   │   ├── redis.ts                  — Redis/BullMQ connection
-│   │   ├── anthropic.ts              — Claude client setup
+│   │   ├── gemini.ts                 — Gemini client setup
 │   │   └── razorpay.ts              — Razorpay SDK setup
 │   ├── models/
 │   │   ├── RecoveryCase.ts
@@ -365,8 +365,8 @@ razorpay-buildathon/
 │   │   └── SystemConfig.ts
 │   ├── services/
 │   │   ├── orchestrator.ts           — Main recovery pipeline
-│   │   ├── diagnosticEngine.ts       — AI root cause diagnosis (tool_use)
-│   │   ├── interventionSelector.ts   — AI intervention choice (tool_use)
+│   │   ├── diagnosticEngine.ts       — AI root cause diagnosis (Gemini)
+│   │   ├── interventionSelector.ts   — AI intervention choice (Gemini)
 │   │   ├── executionEngine.ts        — Razorpay API calls + simulation
 │   │   ├── stoppingRules.ts          — Deterministic gates
 │   │   ├── auditLogger.ts            — Append-only logging
