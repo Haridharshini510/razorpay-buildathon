@@ -138,8 +138,8 @@ export default function CheckoutPage() {
         </div>
 
         <div className="mt-8 text-center">
-          <a href="/" className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
-            ← Back to Dashboard
+          <a href="/dashboard" className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
+            ← View Dashboard
           </a>
         </div>
       </div>

@@ -150,27 +150,27 @@
 - [x] Build `GET /api/batch/:id` API route:
   - Returns batch status, results, breakdown
   - Computed from recovery_cases with matching batch_id
-- [~] Build simulation endpoint (`POST /api/simulate/failures`): *(PARTIAL — 5 hardcoded demo scenarios, not configurable distribution/randomized)*
+- [x] Build simulation endpoint (`POST /api/simulate`):
   - Generates realistic failure events with configurable distribution
   - Randomizes: amounts (₹500-₹1L), methods, error types, banks, timestamps
-  - Enqueues as batch for processing
+  - Enqueues as batch for processing via BullMQ (with direct fallback)
 - [x] Build BullMQ event listener to update batch status as jobs complete
-- [ ] Test: Generate 50 failures → batch process → verify recovery rate is reasonable
+- [x] Test: Generate 50 failures → batch process → verify recovery rate is reasonable
 
 ### Afternoon: Dashboard Foundation (Next.js Pages)
 
-- [ ] Install Tremor for chart components (or shadcn/ui + Recharts)
-- [ ] Build app layout: sidebar navigation, main content area
-- [~] Build Metrics Dashboard page (`/dashboard`): *(PARTIAL — stat cards on main page, no dedicated /dashboard route, no charts)*
-  - Recovery rate (big number, Tremor metric card)
+- [x] Install Recharts for chart components
+- [x] Build app layout: sidebar navigation, main content area
+- [x] Build Metrics Dashboard page (`/dashboard`):
+  - Recovery rate (big number, stat card)
   - Donut chart: recovered vs stopped vs failed
   - Bar chart: recovery rate by failure type
   - Total amount recovered (formatted ₹)
   - Cards: total processed, avg time to recovery
-- [ ] Build Batch List page (`/batches`):
+- [x] Build Batch List page (`/batches`):
   - Table of batch runs with status, recovery rate, timestamp
   - Click → batch detail page
-- [~] Connect pages to API routes (server components or SWR) *(PARTIAL — main page connects to /api/recoveries and /api/audit, but /api/metrics not consumed)*
+- [x] Connect pages to API routes (client components with polling)
 
 ### End of Day 4 Checkpoint:
 - Batch processing works for 50+ events via BullMQ

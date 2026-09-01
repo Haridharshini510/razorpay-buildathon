@@ -103,8 +103,8 @@ export default function Dashboard() {
   const fetchData = useCallback(async (bid: string) => {
     try {
       const [casesRes, auditRes] = await Promise.all([
-        fetch(`/api/recoveries?batch_id=${bid}&limit=10`),
-        fetch(`/api/audit?batch_id=${bid}&limit=200`),
+        fetch(`/api/recoveries?batch_id=${bid}&limit=100`),
+        fetch(`/api/audit?batch_id=${bid}&limit=1000`),
       ]);
 
       if (casesRes.ok) {
@@ -144,6 +144,14 @@ export default function Dashboard() {
   }, [batchId, allDone, fetchData]);
 
   async function runDemo() {
+    await startSimulation("demo");
+  }
+
+  async function runSimulation(count: number = 20) {
+    await startSimulation("random", count);
+  }
+
+  async function startSimulation(mode: "demo" | "random", count?: number) {
     setRunning(true);
     setAllDone(false);
     setCases([]);
@@ -152,11 +160,15 @@ export default function Dashboard() {
     setBatchId(null);
 
     try {
-      const res = await fetch("/api/simulate", { method: "POST" });
+      const res = await fetch("/api/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, count }),
+      });
       if (res.ok) {
         const data = await res.json();
         setBatchId(data.batch_id);
-        setScenarios(data.scenarios);
+        setScenarios(data.scenarios || []);
       } else {
         setRunning(false);
       }
@@ -178,43 +190,42 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="mx-auto max-w-5xl flex items-center justify-between">
+      <header className="border-b border-zinc-800 px-8 py-5">
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">
-              Payment Recovery Agent
-            </h1>
-            <p className="text-sm text-zinc-400">
-              AI-powered payment failure diagnosis and recovery
+            <h1 className="text-xl font-semibold">Simulate & Recover</h1>
+            <p className="text-sm text-zinc-400 mt-0.5">
+              Run failure scenarios and watch the AI agent recover payments
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <a
-              href="/checkout"
-              className="rounded border border-zinc-700 px-4 py-1.5 text-sm font-medium text-zinc-300 hover:bg-zinc-800 transition-colors"
-            >
-              Test Checkout
-            </a>
             <button
               onClick={runDemo}
               disabled={running}
+              className="rounded border border-zinc-700 px-4 py-1.5 text-sm font-medium text-zinc-300 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {running ? "Processing..." : "Run Demo (5)"}
+            </button>
+            <button
+              onClick={() => runSimulation(50)}
+              disabled={running}
               className="rounded bg-blue-600 px-5 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {running ? "Processing..." : "Run Demo"}
+              {running ? "Processing..." : "Simulate 50"}
             </button>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-8 space-y-6">
+      <main className="px-8 py-6 space-y-6">
         {!batchId && !running && (
           <div className="text-center py-20">
             <p className="text-zinc-400 text-lg">
-              5 curated payment failure scenarios
+              AI-powered payment failure recovery
             </p>
             <p className="text-zinc-500 text-sm mt-2">
-              Click &quot;Run Demo&quot; to watch the AI agent diagnose, decide,
-              and recover each one
+              &quot;Run Demo&quot; for 5 curated scenarios, or
+              &quot;Simulate 50&quot; for randomized failures with varied amounts, methods, and banks
             </p>
           </div>
         )}
