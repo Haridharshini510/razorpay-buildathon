@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { nanoid } from "nanoid";
 import { connectDB } from "@/lib/db";
 import { Batch } from "@/models/Batch";
+import { enqueueBatchEvents } from "@/lib/redis";
 import { processRecoveryEvent, PaymentFailureEvent } from "@/services/orchestrator";
 
 export async function POST(req: NextRequest) {
@@ -18,7 +19,6 @@ export async function POST(req: NextRequest) {
 
   const batchId = `batch_${nanoid(12)}`;
 
-  // Create batch record
   const batch = await Batch.create({
     batch_id: batchId,
     total_events: events.length,
@@ -29,18 +29,31 @@ export async function POST(req: NextRequest) {
     started_at: new Date(),
   });
 
-  const startTime = Date.now();
-  processEventsInBackground(events, batchId, startTime);
+  const jobPayloads = events.map((event: PaymentFailureEvent) => ({
+    event,
+    batchId,
+  }));
+
+  const enqueued = await enqueueBatchEvents(jobPayloads, 1000);
+
+  if (!enqueued) {
+    processEventsDirectFallback(events, batchId, Date.now());
+  }
 
   return NextResponse.json({
     batch_id: batchId,
     total_events: events.length,
     status: "processing",
     created_at: batch.started_at,
+    queue_mode: enqueued ? "bullmq" : "direct_fallback",
   });
 }
 
-async function processEventsInBackground(events: PaymentFailureEvent[], batchId: string, startTime: number) {
+async function processEventsDirectFallback(
+  events: PaymentFailureEvent[],
+  batchId: string,
+  startTime: number
+) {
   let recovered = 0;
   let stopped = 0;
   let failed = 0;
@@ -55,11 +68,9 @@ async function processEventsInBackground(events: PaymentFailureEvent[], batchId:
       failed++;
     }
 
-    // Small delay to avoid overwhelming the LLM
     await new Promise((r) => setTimeout(r, 100));
   }
 
-  // Update batch with final results
   await connectDB();
   const total = recovered + stopped + failed;
   await Batch.findOneAndUpdate(
@@ -68,7 +79,7 @@ async function processEventsInBackground(events: PaymentFailureEvent[], batchId:
       status: "completed",
       results: { recovered, stopped, failed, pending: 0 },
       recovery_rate: total > 0 ? recovered / total : 0,
-      total_amount_recovered: 0, // Would calculate from cases
+      total_amount_recovered: 0,
       completed_at: new Date(),
       processing_time_ms: Date.now() - startTime,
     }

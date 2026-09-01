@@ -51,6 +51,25 @@ export async function enqueueDelayedRetry(
   }
 }
 
+export async function enqueueBatchEvents(
+  events: Array<{ event: any; batchId: string }>,
+  staggerMs: number = 1000
+): Promise<boolean> {
+  const queue = getRecoveryQueue();
+  if (!queue) return false;
+  try {
+    const jobs = events.map((data, index) => ({
+      name: "recover",
+      data,
+      opts: { delay: index * staggerMs },
+    }));
+    await queue.addBulk(jobs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function createRecoveryWorker(
   processor: (job: any) => Promise<any>
 ): Worker | null {

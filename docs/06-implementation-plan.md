@@ -142,7 +142,7 @@
 
 ### Morning: Batch Processor + Simulation
 
-- [~] Build `POST /api/batch/process` API route: *(PARTIAL — works but uses direct loop with setTimeout instead of BullMQ job stagger)*
+- [x] Build `POST /api/batch/process` API route:
   - Accepts array of failure events
   - Creates batch record
   - Enqueues each event as a BullMQ job (with 1s stagger to avoid LLM rate limits)
@@ -154,7 +154,7 @@
   - Generates realistic failure events with configurable distribution
   - Randomizes: amounts (₹500-₹1L), methods, error types, banks, timestamps
   - Enqueues as batch for processing
-- [ ] Build BullMQ event listener to update batch status as jobs complete
+- [x] Build BullMQ event listener to update batch status as jobs complete
 - [ ] Test: Generate 50 failures → batch process → verify recovery rate is reasonable
 
 ### Afternoon: Dashboard Foundation (Next.js Pages)
