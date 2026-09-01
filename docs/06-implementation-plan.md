@@ -8,36 +8,36 @@
 
 ### Morning: Scaffolding
 
-- [ ] Initialize Next.js app with App Router:
+- [x] Initialize Next.js app with App Router:
   ```
   npx create-next-app@latest . --typescript --tailwind --app --src-dir
   ```
-- [ ] Set up MongoDB connection (Mongoose) — local Docker or Atlas free tier
-- [ ] Set up Redis (local Docker) + BullMQ
-- [ ] Create Mongoose models (recovery_cases, audit_logs, batches, system_config)
+- [x] Set up MongoDB connection (Mongoose) — local Docker or Atlas free tier
+- [x] Set up Redis (local Docker) + BullMQ
+- [x] Create Mongoose models (recovery_cases, audit_logs, batches, system_config)
 - [x] Set up `.env.local` with Razorpay test keys + Gemini API key
 - [x] Install dependencies: `razorpay`, `mongoose`, `@google/generative-ai`, `bullmq`, `ioredis`
-- [ ] Set up `docker-compose.yml` for MongoDB + Redis
+- [x] Set up `docker-compose.yml` for MongoDB + Redis
 
 ### Afternoon: Core Pipeline + Stopping Rules + Tests
 
-- [ ] Build Recovery Orchestrator — the main state machine:
+- [x] Build Recovery Orchestrator — the main state machine:
   - Receives event → creates recovery case → runs pipeline → updates status
   - Status transitions: received → diagnosing → intervening → waiting_retry → resolved/stopped/failed
-- [ ] Build Stopping Rules Engine (deterministic):
+- [x] Build Stopping Rules Engine (deterministic):
   - `shouldStop(recoveryCase)` — checks all rules, returns {stop, reason}
   - All rules from config, no AI involvement
-- [ ] **Unit tests for stopping rules** (critical — demonstrates build quality):
+- [x] **Unit tests for stopping rules** (critical — demonstrates build quality):
   - Test each rule triggers at boundary
   - Test combinations (multiple rules checked)
   - Test that passing case returns {stop: false}
-- [ ] Build Audit Logger:
+- [x] Build Audit Logger:
   - `logDecision(caseId, stage, decision, reasoning, aiUsed)`
   - Append-only, never updates past logs
-- [ ] Set up BullMQ queue + worker skeleton:
+- [x] Set up BullMQ queue + worker skeleton:
   - `recoveryQueue` — processes recovery jobs
   - Worker picks up jobs and runs through orchestrator
-- [ ] Seed system_config with default stopping rules
+- [x] Seed system_config with default stopping rules
 
 ### End of Day 1 Checkpoint:
 - Next.js app running with API routes accessible
@@ -57,32 +57,32 @@
 - [x] Define structured output schema for `diagnose_failure`:
   - Constrained enum for root_cause
   - confidence (0-1), reasoning, recoverable, suggested_wait_minutes
-- [ ] Write system prompt for root cause diagnosis (this is the critical prompt — iterate)
-- [ ] Build `diagnose(failureEvent)` function:
+- [x] Write system prompt for root cause diagnosis (this is the critical prompt — iterate)
+- [x] Build `diagnose(failureEvent)` function:
   - Constructs user message from event data
   - Calls Gemini with JSON-only prompt
   - Returns typed diagnosis object
-- [ ] Build fallback diagnosis (rule-based mapping) for when LLM is unavailable
-- [ ] **Create test suite: 10 hand-crafted failure scenarios with expected diagnoses**
-- [ ] Run diagnosis against all 10 scenarios, score accuracy
-- [ ] Iterate on system prompt until >85% accuracy on test set
+- [x] Build fallback diagnosis (rule-based mapping) for when LLM is unavailable
+- [x] **Create test suite: 10 hand-crafted failure scenarios with expected diagnoses**
+- [x] Run diagnosis against all 10 scenarios, score accuracy
+- [x] Iterate on system prompt until >85% accuracy on test set
 
 ### Afternoon: Intervention Selector
 
 - [x] Define structured output schema for `select_intervention`:
   - action enum: immediate_retry, delayed_retry, alternate_method, payment_link, customer_nudge, stop
   - method, delay_minutes, reasoning, fallback_action
-- [ ] Write system prompt for intervention selection
-- [ ] Build `selectIntervention(diagnosis, context)` function:
+- [x] Write system prompt for intervention selection
+- [x] Build `selectIntervention(diagnosis, context)` function:
   - Constructs prompt with diagnosis + context
   - Calls Gemini with JSON-only prompt
   - Validates output against allowed actions
   - Returns intervention plan
-- [ ] Build fallback intervention selection (root_cause → default action mapping)
-- [ ] **Test suite: 10 scenarios with expected interventions** (pair with diagnosis test set)
-- [ ] Iterate on intervention prompt until selections are reasonable
-- [ ] Integrate both engines into Recovery Orchestrator pipeline
-- [ ] End-to-end test: hardcoded failure → diagnosis → intervention selection → audit log
+- [x] Build fallback intervention selection (root_cause → default action mapping)
+- [x] **Test suite: 10 scenarios with expected interventions** (pair with diagnosis test set)
+- [x] Iterate on intervention prompt until selections are reasonable
+- [x] Integrate both engines into Recovery Orchestrator pipeline
+- [x] End-to-end test: hardcoded failure → diagnosis → intervention selection → audit log
 
 ### End of Day 2 Checkpoint:
 - Diagnosis engine produces accurate root causes (>85% on test set)
@@ -97,36 +97,36 @@
 
 ### Morning: Razorpay API Integration
 
-- [ ] Set up Razorpay SDK with test keys
-- [ ] Build execution functions:
+- [x] Set up Razorpay SDK with test keys
+- [x] Build execution functions:
   - `retryPayment(orderId, method)` — create new payment attempt
   - `createPaymentLink(amount, customer, description)` — generate recovery link
   - `createOrder(amount, currency)` — new order for alternate method attempt
-- [ ] Build webhook receiver API route (`POST /api/webhooks/razorpay`):
+- [x] Build webhook receiver API route (`POST /api/webhooks/razorpay`):
   - Signature verification
   - Event parsing (payment.failed)
   - Enqueue to BullMQ
-- [ ] Set up ngrok for webhook testing
+- [x] Set up ngrok for webhook testing
 
 ### Afternoon: Execution Engine + BullMQ Delayed Jobs
 
-- [ ] Build Execution Engine:
+- [x] Build Execution Engine:
   - Takes intervention plan → maps to correct Razorpay API call → executes
   - Captures result (success/failure + details)
   - Updates recovery case with intervention result
-- [ ] Wire delayed retries through BullMQ:
+- [x] Wire delayed retries through BullMQ:
   - Intervention says "delayed_retry, 15 min" → enqueue job with 15min delay
   - Worker picks up delayed job → runs execution → updates case
   - If execution fails → check stopping rules → maybe enqueue next attempt
-- [ ] Handle execution failures (Razorpay API errors):
+- [x] Handle execution failures (Razorpay API errors):
   - Log the failure
   - Don't crash the pipeline
   - Mark intervention as "execution_failed"
-- [ ] Handle simulation layer:
+- [x] Handle simulation layer:
   - Since Razorpay test mode can't truly simulate "retry succeeds after timeout," build a thin simulation layer
   - Based on root cause + time elapsed, simulate whether retry would succeed
   - Log clearly: "simulated outcome" vs "real API call"
-- [ ] Test: Trigger a webhook → watch full pipeline run → see result in DB
+- [x] Test: Trigger a webhook → watch full pipeline run → see result in DB
 
 ### End of Day 3 Checkpoint:
 - Razorpay test-mode APIs working (can create orders, payment links)
@@ -142,15 +142,15 @@
 
 ### Morning: Batch Processor + Simulation
 
-- [ ] Build `POST /api/batch/process` API route:
+- [~] Build `POST /api/batch/process` API route: *(PARTIAL — works but uses direct loop with setTimeout instead of BullMQ job stagger)*
   - Accepts array of failure events
   - Creates batch record
   - Enqueues each event as a BullMQ job (with 1s stagger to avoid LLM rate limits)
   - Returns batch_id immediately
-- [ ] Build `GET /api/batch/:id` API route:
+- [x] Build `GET /api/batch/:id` API route:
   - Returns batch status, results, breakdown
   - Computed from recovery_cases with matching batch_id
-- [ ] Build simulation endpoint (`POST /api/simulate/failures`):
+- [~] Build simulation endpoint (`POST /api/simulate/failures`): *(PARTIAL — 5 hardcoded demo scenarios, not configurable distribution/randomized)*
   - Generates realistic failure events with configurable distribution
   - Randomizes: amounts (₹500-₹1L), methods, error types, banks, timestamps
   - Enqueues as batch for processing
@@ -161,7 +161,7 @@
 
 - [ ] Install Tremor for chart components (or shadcn/ui + Recharts)
 - [ ] Build app layout: sidebar navigation, main content area
-- [ ] Build Metrics Dashboard page (`/dashboard`):
+- [~] Build Metrics Dashboard page (`/dashboard`): *(PARTIAL — stat cards on main page, no dedicated /dashboard route, no charts)*
   - Recovery rate (big number, Tremor metric card)
   - Donut chart: recovered vs stopped vs failed
   - Bar chart: recovery rate by failure type
@@ -170,7 +170,7 @@
 - [ ] Build Batch List page (`/batches`):
   - Table of batch runs with status, recovery rate, timestamp
   - Click → batch detail page
-- [ ] Connect pages to API routes (server components or SWR)
+- [~] Connect pages to API routes (server components or SWR) *(PARTIAL — main page connects to /api/recoveries and /api/audit, but /api/metrics not consumed)*
 
 ### End of Day 4 Checkpoint:
 - Batch processing works for 50+ events via BullMQ
@@ -184,7 +184,7 @@
 
 ### Morning: Recovery Case Detail View
 
-- [ ] Build Recovery Timeline page (`/recoveries/[id]`):
+- [~] Build Recovery Timeline page (`/recoveries/[id]`): *(PARTIAL — inline PipelineTimeline component on main page with AI/Rules badges and color-coded dots, but no dedicated page)*
   - Vertical timeline showing each step of the recovery
   - Event → Diagnosis → Stopping Check → Intervention → (Wait) → Execution → Outcome
   - Each step shows: timestamp, decision, reasoning
@@ -207,7 +207,7 @@
 - [ ] Set up Bull Board at `/admin/queues`:
   - Shows queue health, pending/delayed/completed jobs
   - Visible in demo as observability proof
-- [ ] Build "Run Simulation" button prominently in dashboard:
+- [x] Build "Run Simulation" button prominently in dashboard:
   - Click → modal with distribution config → starts batch → polls for results
   - Shows progress (X/50 processed) while running
 - [ ] Add graceful degradation indicator:
@@ -231,7 +231,7 @@
   - Dashboard shows "Fallback Mode" badges on affected cases
   - Audit log shows fallback_used: true with lower confidence
   - Recovery still happens (just less accurate)
-- [ ] Test stopping rules in practice:
+- [~] Test stopping rules in practice: *(PARTIAL — unit tests exist in tests/stoppingRules.test.ts, but no documented full-system verification)*
   - Create scenario where max_retries triggers → verify case stops
   - Create scenario where quiet_hours triggers → verify no nudge sent
   - Create scenario where amount_ceiling triggers → verify manual flag
@@ -243,11 +243,11 @@
 
 ### Afternoon: UI Polish + Demo Readiness
 
-- [ ] Add error states in UI (API errors, empty states, loading skeletons)
+- [~] Add error states in UI (API errors, empty states, loading skeletons) *(PARTIAL — empty state + loading spinner exist, but no error states or skeletons)*
 - [ ] Add "Export Audit" button (download JSON for a batch)
 - [ ] Show stopping rules configuration in dashboard (what the limits are)
-- [ ] Polish metric formatting (₹ with commas, percentages, time durations)
-- [ ] Ensure mobile doesn't break (basic responsiveness)
+- [~] Polish metric formatting (₹ with commas, percentages, time durations) *(PARTIAL — ₹ with toLocaleString works, no percentage/duration formatting)*
+- [~] Ensure mobile doesn't break (basic responsiveness) *(PARTIAL — some responsive grid, minimal)*
 - [ ] Run 3 different batch distributions, verify varied results
 - [ ] Fix any bugs found during testing
 
@@ -279,7 +279,7 @@
 
 ### Afternoon: Documentation + Submission
 
-- [ ] Write README.md:
+- [x] Write README.md:
   - What this is (1 paragraph)
   - How to run it (`docker-compose up` + `npm run dev`)
   - Architecture diagram (text)
@@ -296,7 +296,7 @@
   - What the agent gets wrong (which failure types it struggles with)
   - Limitations of simulation layer
   - What you'd improve with more time
-- [ ] Clean up code:
+- [~] Clean up code: *(PARTIAL — .env.example exists, docker-compose.yml exists, but dead code/console.log cleanup not done)*
   - Remove dead code, console.logs
   - Ensure `.env.example` exists (no actual keys committed)
   - Verify `docker-compose up && npm run dev` works from fresh clone
