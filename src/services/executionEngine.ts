@@ -20,6 +20,11 @@ export async function executeIntervention(
   const amount = recoveryCase.original_event.amount;
   const currency = recoveryCase.original_event.currency || "INR";
 
+  if (recoveryCase.original_event.payment_id.startsWith("pay_demo_") ||
+      recoveryCase.original_event.payment_id.startsWith("pay_sim_")) {
+    return simulateExecution(intervention, recoveryCase);
+  }
+
   try {
     switch (intervention.action) {
       case "immediate_retry":
@@ -215,6 +220,60 @@ async function sendCustomerNudge(
       status: link.status,
     },
   };
+}
+
+function simulateExecution(
+  intervention: InterventionResult,
+  recoveryCase: IRecoveryCase
+): ExecutionResult {
+  const method = intervention.method === "same"
+    ? recoveryCase.original_event.method
+    : intervention.method;
+
+  switch (intervention.action) {
+    case "immediate_retry":
+      return {
+        success: true,
+        detail: `Retry payment succeeded via ${method} — new payment captured`,
+        new_payment_id: `pay_recovered_${recoveryCase.case_id.slice(-6)}`,
+        order_id: `order_retry_${recoveryCase.case_id.slice(-6)}`,
+      };
+    case "delayed_retry":
+      return {
+        success: true,
+        detail: `Delayed retry succeeded via ${method} after cool-off period`,
+        new_payment_id: `pay_recovered_${recoveryCase.case_id.slice(-6)}`,
+        order_id: `order_retry_${recoveryCase.case_id.slice(-6)}`,
+      };
+    case "payment_link":
+      return {
+        success: true,
+        detail: `Payment link created and sent to ${recoveryCase.original_event.customer.email} via SMS & email`,
+        new_payment_id: `plink_${recoveryCase.case_id.slice(-6)}`,
+        payment_link: `https://rzp.io/i/${recoveryCase.case_id.slice(-8)}`,
+      };
+    case "customer_nudge":
+      return {
+        success: true,
+        detail: `Nudge sent to ${recoveryCase.original_event.customer.name || "customer"} with payment link`,
+        new_payment_id: `plink_${recoveryCase.case_id.slice(-6)}`,
+        payment_link: `https://rzp.io/i/${recoveryCase.case_id.slice(-8)}`,
+      };
+    case "alternate_method":
+      return {
+        success: true,
+        detail: `Alternate method payment initiated via ${method}`,
+        new_payment_id: `pay_alt_${recoveryCase.case_id.slice(-6)}`,
+        order_id: `order_alt_${recoveryCase.case_id.slice(-6)}`,
+      };
+    case "stop":
+      return {
+        success: false,
+        detail: "Recovery stopped — no further action taken",
+      };
+    default:
+      return { success: false, detail: `Unknown action: ${intervention.action}` };
+  }
 }
 
 async function createPaymentLinkForOrder(

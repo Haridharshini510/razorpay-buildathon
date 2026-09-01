@@ -15,17 +15,39 @@ function getRedisConnection(): IORedis {
   return redisConnection;
 }
 
+let recoveryQueue: Queue | null = null;
+
 export function getRecoveryQueue(): Queue | null {
+  if (recoveryQueue) return recoveryQueue;
   try {
-    return new Queue("recovery", {
+    recoveryQueue = new Queue("recovery", {
       connection: getRedisConnection(),
       defaultJobOptions: {
         removeOnComplete: 100,
         removeOnFail: 200,
       },
     });
+    return recoveryQueue;
   } catch {
     return null;
+  }
+}
+
+export async function enqueueDelayedRetry(
+  caseId: string,
+  delayMinutes: number
+): Promise<boolean> {
+  const queue = getRecoveryQueue();
+  if (!queue) return false;
+  try {
+    await queue.add(
+      "delayed_retry",
+      { caseId },
+      { delay: delayMinutes * 60 * 1000 }
+    );
+    return true;
+  } catch {
+    return false;
   }
 }
 

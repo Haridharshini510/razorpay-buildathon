@@ -1,118 +1,155 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { nanoid } from "nanoid";
 import { connectDB } from "@/lib/db";
 import { Batch } from "@/models/Batch";
 import { processRecoveryEvent, PaymentFailureEvent } from "@/services/orchestrator";
 
-const ERROR_TEMPLATES: Record<string, { error_code: string; error_description: string }[]> = {
-  bank_timeout: [
-    { error_code: "GATEWAY_ERROR", error_description: "Payment was unsuccessful as the bank server is not responding" },
-    { error_code: "GATEWAY_ERROR", error_description: "Bank server timeout during payment processing" },
-  ],
-  insufficient_funds: [
-    { error_code: "BAD_REQUEST_ERROR", error_description: "Insufficient account balance" },
-    { error_code: "BAD_REQUEST_ERROR", error_description: "Your account does not have enough balance to complete this transaction" },
-  ],
-  card_expired: [
-    { error_code: "BAD_REQUEST_ERROR", error_description: "The card has expired" },
-    { error_code: "BAD_REQUEST_ERROR", error_description: "Card expired. Please use a different card." },
-  ],
-  upi_expired: [
-    { error_code: "GATEWAY_ERROR", error_description: "Your payment could not be completed as the UPI transaction expired" },
-    { error_code: "GATEWAY_ERROR", error_description: "UPI collect request expired" },
-  ],
-  network_error: [
-    { error_code: "GATEWAY_ERROR", error_description: "Network error during payment processing" },
-    { error_code: "GATEWAY_ERROR", error_description: "Connection to bank network failed" },
-  ],
-};
-
-const METHODS = ["upi", "card", "netbanking", "wallet"];
-const BANKS = ["HDFC", "SBI", "ICICI", "Axis", "Kotak", "PNB"];
-
-function generateEvent(type: string, amountRange: { min: number; max: number }): PaymentFailureEvent {
-  const templates = ERROR_TEMPLATES[type] || ERROR_TEMPLATES.bank_timeout;
-  const template = templates[Math.floor(Math.random() * templates.length)];
-  const amount = Math.floor(Math.random() * (amountRange.max - amountRange.min) + amountRange.min);
-  const method = type === "upi_expired" ? "upi" : type === "card_expired" ? "card" : METHODS[Math.floor(Math.random() * METHODS.length)];
-
-  return {
-    payment_id: `pay_sim_${nanoid(8)}`,
-    order_id: `order_sim_${nanoid(8)}`,
-    amount,
-    currency: "INR",
-    method,
-    error_code: template.error_code,
-    error_description: template.error_description,
-    customer: {
-      email: `customer_${nanoid(4)}@example.com`,
-      phone: `98${Math.floor(Math.random() * 100000000).toString().padStart(8, "0")}`,
-      name: `Test Customer ${nanoid(4)}`,
-    },
-    timestamp: new Date().toISOString(),
-  };
+interface DemoScenario {
+  label: string;
+  description: string;
+  expected_path: string;
+  event: Omit<PaymentFailureEvent, "payment_id" | "order_id" | "timestamp">;
 }
 
-export async function POST(req: NextRequest) {
+const DEMO_SCENARIOS: DemoScenario[] = [
+  {
+    label: "Bank Server Timeout",
+    description: "HDFC bank server stopped responding during a UPI payment",
+    expected_path: "Diagnose → Delayed Retry → Recovered",
+    event: {
+      amount: 250000,
+      currency: "INR",
+      method: "upi",
+      error_code: "GATEWAY_ERROR",
+      error_description:
+        "Payment was unsuccessful as the bank server is not responding",
+      customer: {
+        email: "rahul.sharma@example.com",
+        phone: "9876543210",
+        name: "Rahul Sharma",
+      },
+    },
+  },
+  {
+    label: "Insufficient Funds",
+    description: "Card payment declined — customer's account has no balance",
+    expected_path: "Diagnose → Not Recoverable → Stopped",
+    event: {
+      amount: 750000,
+      currency: "INR",
+      method: "card",
+      error_code: "BAD_REQUEST_ERROR",
+      error_description: "Insufficient account balance",
+      customer: {
+        email: "priya.patel@example.com",
+        phone: "9123456789",
+        name: "Priya Patel",
+      },
+    },
+  },
+  {
+    label: "UPI Collect Expired",
+    description: "Customer didn't approve the UPI collect request in time",
+    expected_path: "Diagnose → Payment Link → Recovered",
+    event: {
+      amount: 149900,
+      currency: "INR",
+      method: "upi",
+      error_code: "GATEWAY_ERROR",
+      error_description:
+        "Your payment could not be completed as the UPI transaction expired",
+      customer: {
+        email: "amit.kumar@example.com",
+        phone: "9988776655",
+        name: "Amit Kumar",
+      },
+    },
+  },
+  {
+    label: "Expired Credit Card",
+    description: "Customer tried to pay with an expired credit card",
+    expected_path: "Diagnose → Payment Link (new card) → Recovered",
+    event: {
+      amount: 499900,
+      currency: "INR",
+      method: "card",
+      error_code: "BAD_REQUEST_ERROR",
+      error_description: "The card has expired",
+      customer: {
+        email: "sneha.reddy@example.com",
+        phone: "9876501234",
+        name: "Sneha Reddy",
+      },
+    },
+  },
+  {
+    label: "Network Error",
+    description: "Connection to payment gateway dropped mid-transaction",
+    expected_path: "Diagnose → Immediate Retry → Recovered",
+    event: {
+      amount: 89900,
+      currency: "INR",
+      method: "netbanking",
+      error_code: "GATEWAY_ERROR",
+      error_description: "Network error during payment processing",
+      customer: {
+        email: "vikram.singh@example.com",
+        phone: "9765432100",
+        name: "Vikram Singh",
+      },
+    },
+  },
+];
+
+export async function POST() {
   await connectDB();
 
-  const body = await req.json();
-  const count = body.count || 50;
-  const distribution = body.distribution || {
-    bank_timeout: 0.30,
-    insufficient_funds: 0.20,
-    card_expired: 0.15,
-    upi_expired: 0.15,
-    network_error: 0.20,
-  };
-  const amountRange = body.amount_range || { min: 50000, max: 10000000 }; // ₹500 to ₹1L in paise
-
-  // Generate events based on distribution
-  const events: PaymentFailureEvent[] = [];
-  for (const [type, ratio] of Object.entries(distribution)) {
-    const typeCount = Math.round(count * (ratio as number));
-    for (let i = 0; i < typeCount; i++) {
-      events.push(generateEvent(type, amountRange));
-    }
-  }
-
-  // Fill remaining if rounding caused a deficit
-  while (events.length < count) {
-    events.push(generateEvent("bank_timeout", amountRange));
-  }
-
-  // Shuffle
-  for (let i = events.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [events[i], events[j]] = [events[j], events[i]];
-  }
-
   const batchId = `batch_${nanoid(12)}`;
+
+  const events: PaymentFailureEvent[] = DEMO_SCENARIOS.map((scenario) => ({
+    ...scenario.event,
+    payment_id: `pay_demo_${nanoid(8)}`,
+    order_id: `order_demo_${nanoid(8)}`,
+    timestamp: new Date().toISOString(),
+  }));
 
   await Batch.create({
     batch_id: batchId,
     total_events: events.length,
-    distribution: Object.fromEntries(
-      Object.entries(distribution).map(([k, v]) => [k, Math.round(count * (v as number))])
-    ),
+    distribution: {
+      bank_timeout: 1,
+      insufficient_funds: 1,
+      upi_expired: 1,
+      card_expired: 1,
+      network_error: 1,
+    },
     status: "processing",
     results: { recovered: 0, stopped: 0, failed: 0, pending: events.length },
     total_amount_processed: events.reduce((sum, e) => sum + e.amount, 0),
     started_at: new Date(),
   });
 
-  // Process in background
-  processSimulatedBatch(events, batchId);
+  processDemoBatch(events, batchId);
 
   return NextResponse.json({
     batch_id: batchId,
     total_events: events.length,
     status: "processing",
-    distribution,
+    scenarios: DEMO_SCENARIOS.map((s, i) => ({
+      label: s.label,
+      description: s.description,
+      expected_path: s.expected_path,
+      payment_id: events[i].payment_id,
+      amount: events[i].amount,
+      method: events[i].method,
+    })),
   });
 }
 
-async function processSimulatedBatch(events: PaymentFailureEvent[], batchId: string) {
+async function processDemoBatch(
+  events: PaymentFailureEvent[],
+  batchId: string
+) {
   let recovered = 0;
   let stopped = 0;
   let failed = 0;
@@ -132,7 +169,7 @@ async function processSimulatedBatch(events: PaymentFailureEvent[], batchId: str
     } catch {
       failed++;
     }
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 300));
   }
 
   await connectDB();

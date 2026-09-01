@@ -4,9 +4,10 @@ import { RecoveryCase, IRecoveryCase } from "@/models/RecoveryCase";
 import { shouldStop, formatStoppingState, RecoveryCaseState } from "./stoppingRules";
 import { logDecision } from "./auditLogger";
 import { diagnose } from "./diagnosticEngine";
-import { selectIntervention } from "./interventionSelector";
+import { selectIntervention, InterventionResult } from "./interventionSelector";
 import { executeIntervention } from "./executionEngine";
 import { DEFAULT_STOPPING_RULES } from "@/models/SystemConfig";
+import { enqueueDelayedRetry } from "@/lib/redis";
 
 export interface PaymentFailureEvent {
   payment_id: string;
@@ -194,10 +195,57 @@ export async function runPipeline(recoveryCase: IRecoveryCase): Promise<IRecover
     context: { method: intervention.method, delay_minutes: intervention.delay_minutes },
   });
 
-  // --- EXECUTE ---
+  // --- DELAYED RETRY: enqueue to BullMQ if possible ---
+  if (intervention.action === "delayed_retry" && intervention.delay_minutes) {
+    const enqueued = await enqueueDelayedRetry(
+      caseId,
+      intervention.delay_minutes
+    );
+
+    if (enqueued) {
+      const pendingRecord = {
+        attempt: recoveryCase.stopping_state.retry_count + 1,
+        action: intervention.action,
+        method: intervention.method,
+        delay_minutes: intervention.delay_minutes,
+        reasoning: intervention.reasoning,
+        scheduled_at: new Date(),
+        result: "pending" as const,
+        result_detail: `Scheduled for execution in ${intervention.delay_minutes} minutes via BullMQ`,
+      };
+
+      recoveryCase.interventions.push(pendingRecord);
+      recoveryCase.status = "waiting_retry";
+      await recoveryCase.save();
+
+      await logDecision({
+        recovery_case_id: caseId,
+        batch_id: batchId,
+        stage: "execution",
+        decision: "delayed_retry_enqueued",
+        reasoning: `Delayed retry scheduled: ${intervention.delay_minutes} min delay via BullMQ`,
+        ai_used: false,
+      });
+
+      return recoveryCase;
+    }
+    // Redis unavailable — fall through to immediate execution
+  }
+
+  // --- EXECUTE (immediate) ---
+  return await executeAndResolve(recoveryCase, intervention, caseState);
+}
+
+export async function executeAndResolve(
+  recoveryCase: IRecoveryCase,
+  intervention: InterventionResult,
+  caseState: RecoveryCaseState
+): Promise<IRecoveryCase> {
+  const caseId = recoveryCase.case_id;
+  const batchId = recoveryCase.batch_id;
+
   const executionResult = await executeIntervention(intervention, recoveryCase);
 
-  // Update intervention record
   const interventionRecord = {
     attempt: recoveryCase.stopping_state.retry_count + 1,
     action: intervention.action,
@@ -212,7 +260,15 @@ export async function runPipeline(recoveryCase: IRecoveryCase): Promise<IRecover
     new_payment_id: executionResult.new_payment_id,
   };
 
-  recoveryCase.interventions.push(interventionRecord);
+  const pendingIdx = recoveryCase.interventions.findIndex(
+    (i) => i.result === "pending" && i.action === intervention.action
+  );
+  if (pendingIdx >= 0) {
+    recoveryCase.interventions[pendingIdx] = interventionRecord;
+  } else {
+    recoveryCase.interventions.push(interventionRecord);
+  }
+
   recoveryCase.stopping_state.retry_count += 1;
   recoveryCase.stopping_state.last_attempt_at = new Date();
 
@@ -250,7 +306,6 @@ export async function runPipeline(recoveryCase: IRecoveryCase): Promise<IRecover
       ai_used: false,
     });
   } else {
-    // Check if we should try again or give up
     const newStopResult = shouldStop(
       { ...caseState, retry_count: recoveryCase.stopping_state.retry_count },
       DEFAULT_STOPPING_RULES
@@ -275,7 +330,6 @@ export async function runPipeline(recoveryCase: IRecoveryCase): Promise<IRecover
         ai_used: false,
       });
     } else {
-      // Mark as failed for this attempt but still recoverable
       recoveryCase.status = "failed";
       recoveryCase.outcome = {
         result: "failed",
@@ -296,4 +350,70 @@ export async function runPipeline(recoveryCase: IRecoveryCase): Promise<IRecover
 
   await recoveryCase.save();
   return recoveryCase;
+}
+
+export async function executeDelayedRetry(caseId: string): Promise<IRecoveryCase | null> {
+  await connectDB();
+
+  const recoveryCase = await RecoveryCase.findOne({ case_id: caseId });
+  if (!recoveryCase || recoveryCase.status !== "waiting_retry") {
+    return null;
+  }
+
+  const pendingIntervention = recoveryCase.interventions.find(
+    (i: any) => i.result === "pending"
+  );
+  if (!pendingIntervention) return null;
+
+  const intervention: InterventionResult = {
+    action: pendingIntervention.action as any,
+    method: pendingIntervention.method,
+    delay_minutes: pendingIntervention.delay_minutes,
+    reasoning: pendingIntervention.reasoning,
+    model_used: "delayed_execution",
+    fallback_used: false,
+  };
+
+  const caseState: RecoveryCaseState = {
+    retry_count: recoveryCase.stopping_state.retry_count,
+    nudge_count: recoveryCase.stopping_state.nudge_count,
+    first_attempt_at: recoveryCase.stopping_state.first_attempt_at,
+    last_attempt_at: recoveryCase.stopping_state.last_attempt_at,
+    amount: recoveryCase.original_event.amount,
+  };
+
+  const stopResult = shouldStop(caseState, DEFAULT_STOPPING_RULES);
+  if (stopResult.stop) {
+    recoveryCase.status = "stopped";
+    recoveryCase.stopping_state.stopped = true;
+    recoveryCase.stopping_state.stop_reason = stopResult.reason;
+    recoveryCase.outcome = {
+      result: "stopped",
+      total_attempts: recoveryCase.stopping_state.retry_count,
+    };
+    recoveryCase.resolved_at = new Date();
+    await recoveryCase.save();
+
+    await logDecision({
+      recovery_case_id: caseId,
+      batch_id: recoveryCase.batch_id,
+      stage: "stopping_check",
+      decision: "stopped_before_delayed_execution",
+      reasoning: `Stopping rule triggered before delayed retry: ${stopResult.reason}`,
+      ai_used: false,
+    });
+
+    return recoveryCase;
+  }
+
+  await logDecision({
+    recovery_case_id: caseId,
+    batch_id: recoveryCase.batch_id,
+    stage: "execution",
+    decision: "delayed_retry_executing",
+    reasoning: `Delayed retry firing after ${pendingIntervention.delay_minutes} min wait`,
+    ai_used: false,
+  });
+
+  return await executeAndResolve(recoveryCase, intervention, caseState);
 }

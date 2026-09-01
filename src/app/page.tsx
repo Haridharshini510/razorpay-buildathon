@@ -2,86 +2,191 @@
 
 import { useState, useEffect, useCallback } from "react";
 
-interface Metrics {
-  total_events_processed: number;
-  total_recovered: number;
-  total_stopped: number;
-  total_failed: number;
-  total_pending: number;
-  recovery_rate: number;
-  total_amount_recovered: number;
-  avg_time_to_recovery_ms: number;
-  by_failure_type: Record<string, { count: number; recovered: number; recovery_rate: number }>;
+interface AuditEntry {
+  audit_id: string;
+  recovery_case_id: string;
+  stage: string;
+  decision: string;
+  reasoning: string;
+  confidence?: number;
+  ai_used: boolean;
+  llm_model?: string;
+  context?: Record<string, any>;
+  timestamp: string;
 }
 
-interface BatchResult {
-  batch_id: string;
-  total_events: number;
+interface CaseData {
+  case_id: string;
   status: string;
+  original_event: {
+    payment_id: string;
+    order_id: string;
+    amount: number;
+    currency: string;
+    method: string;
+    error_code: string;
+    error_description: string;
+    customer: { email: string; phone: string; name?: string };
+    occurred_at: string;
+  };
+  diagnosis: {
+    root_cause: string;
+    confidence: number;
+    reasoning: string;
+    recoverable: boolean;
+    model_used: string;
+    fallback_used: boolean;
+  } | null;
+  interventions: {
+    attempt: number;
+    action: string;
+    method: string;
+    delay_minutes?: number;
+    reasoning: string;
+    result: string;
+    result_detail?: string;
+  }[];
+  stopping_state: {
+    retry_count: number;
+    nudge_count: number;
+    stopped: boolean;
+    stop_reason: string | null;
+  };
+  outcome: {
+    result: string;
+    recovered_amount?: number;
+    time_to_recovery_ms?: number;
+    total_attempts: number;
+    final_method?: string;
+  };
+}
+
+interface ScenarioMeta {
+  label: string;
+  description: string;
+  expected_path: string;
+  payment_id: string;
+  amount: number;
+  method: string;
+}
+
+const STAGE_ORDER = [
+  "intake",
+  "diagnosis",
+  "stopping_check",
+  "intervention_selection",
+  "execution",
+  "outcome",
+];
+
+const STAGE_LABELS: Record<string, string> = {
+  intake: "Payment Received",
+  diagnosis: "Diagnosis",
+  stopping_check: "Stopping Rules",
+  intervention_selection: "Intervention Selected",
+  execution: "Execution",
+  outcome: "Outcome",
+};
+
+function formatAmount(paise: number) {
+  return `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
 }
 
 export default function Dashboard() {
-  const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [simulating, setSimulating] = useState(false);
-  const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
-  const [simCount, setSimCount] = useState(20);
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [scenarios, setScenarios] = useState<ScenarioMeta[]>([]);
+  const [cases, setCases] = useState<CaseData[]>([]);
+  const [auditMap, setAuditMap] = useState<Record<string, AuditEntry[]>>({});
+  const [running, setRunning] = useState(false);
+  const [allDone, setAllDone] = useState(false);
 
-  const fetchMetrics = useCallback(async () => {
+  const fetchData = useCallback(async (bid: string) => {
     try {
-      const res = await fetch("/api/metrics");
-      if (res.ok) {
-        const data = await res.json();
-        setMetrics(data);
+      const [casesRes, auditRes] = await Promise.all([
+        fetch(`/api/recoveries?batch_id=${bid}&limit=10`),
+        fetch(`/api/audit?batch_id=${bid}&limit=200`),
+      ]);
+
+      if (casesRes.ok) {
+        const casesData = await casesRes.json();
+        setCases(casesData.cases);
+
+        const done =
+          casesData.cases.length > 0 &&
+          casesData.cases.every((c: CaseData) =>
+            ["resolved", "stopped", "failed"].includes(c.status)
+          );
+        if (done) {
+          setAllDone(true);
+          setRunning(false);
+        }
+      }
+
+      if (auditRes.ok) {
+        const auditData = await auditRes.json();
+        const grouped: Record<string, AuditEntry[]> = {};
+        for (const entry of auditData.entries) {
+          if (!grouped[entry.recovery_case_id])
+            grouped[entry.recovery_case_id] = [];
+          grouped[entry.recovery_case_id].push(entry);
+        }
+        setAuditMap(grouped);
       }
     } catch {
-      // ignore
-    } finally {
-      setLoading(false);
+      // ignore fetch errors
     }
   }, []);
 
   useEffect(() => {
-    fetchMetrics();
-    const interval = setInterval(fetchMetrics, 5000);
+    if (!batchId || allDone) return;
+    const interval = setInterval(() => fetchData(batchId), 1500);
     return () => clearInterval(interval);
-  }, [fetchMetrics]);
+  }, [batchId, allDone, fetchData]);
 
-  async function runSimulation() {
-    setSimulating(true);
-    setBatchResult(null);
+  async function runDemo() {
+    setRunning(true);
+    setAllDone(false);
+    setCases([]);
+    setAuditMap({});
+    setScenarios([]);
+    setBatchId(null);
+
     try {
-      const res = await fetch("/api/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ count: simCount }),
-      });
+      const res = await fetch("/api/simulate", { method: "POST" });
       if (res.ok) {
         const data = await res.json();
-        setBatchResult(data);
+        setBatchId(data.batch_id);
+        setScenarios(data.scenarios);
+      } else {
+        setRunning(false);
       }
     } catch {
-      // ignore
-    } finally {
-      setSimulating(false);
+      setRunning(false);
     }
   }
 
-  function formatAmount(paise: number) {
-    return `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+  function getScenarioForCase(c: CaseData): ScenarioMeta | undefined {
+    return scenarios.find((s) => s.payment_id === c.original_event.payment_id);
   }
 
-  function formatPercent(rate: number) {
-    return `${(rate * 100).toFixed(1)}%`;
-  }
+  const recovered = cases.filter((c) => c.outcome.result === "recovered");
+  const stopped = cases.filter((c) => c.outcome.result === "stopped");
+  const totalRecovered = recovered.reduce(
+    (sum, c) => sum + (c.outcome.recovered_amount || 0),
+    0
+  );
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="mx-auto max-w-7xl flex items-center justify-between">
+        <div className="mx-auto max-w-5xl flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">Payment Recovery Agent</h1>
-            <p className="text-sm text-zinc-400">AI-powered payment failure recovery</p>
+            <h1 className="text-xl font-semibold tracking-tight">
+              Payment Recovery Agent
+            </h1>
+            <p className="text-sm text-zinc-400">
+              AI-powered payment failure diagnosis and recovery
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <a
@@ -90,133 +195,265 @@ export default function Dashboard() {
             >
               Test Checkout
             </a>
-            <input
-              type="number"
-              min={1}
-              max={200}
-              value={simCount}
-              onChange={(e) => setSimCount(Number(e.target.value))}
-              className="w-20 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              suppressHydrationWarning
-            />
             <button
-              onClick={runSimulation}
-              disabled={simulating}
-              className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              suppressHydrationWarning
+              onClick={runDemo}
+              disabled={running}
+              className="rounded bg-blue-600 px-5 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {simulating ? "Simulating..." : "Run Simulation"}
+              {running ? "Processing..." : "Run Demo"}
             </button>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-6 py-8 space-y-8">
-        {batchResult && (
-          <div className="rounded-lg bg-blue-950/50 border border-blue-800 px-4 py-3 text-sm">
-            Batch <code className="font-mono text-blue-300">{batchResult.batch_id}</code> started
-            — processing {batchResult.total_events} events. Metrics will update automatically.
+      <main className="mx-auto max-w-5xl px-6 py-8 space-y-6">
+        {!batchId && !running && (
+          <div className="text-center py-20">
+            <p className="text-zinc-400 text-lg">
+              5 curated payment failure scenarios
+            </p>
+            <p className="text-zinc-500 text-sm mt-2">
+              Click &quot;Run Demo&quot; to watch the AI agent diagnose, decide,
+              and recover each one
+            </p>
           </div>
         )}
 
-        {loading ? (
-          <div className="text-center text-zinc-500 py-20">Loading metrics...</div>
-        ) : !metrics || metrics.total_events_processed === 0 ? (
-          <div className="text-center py-20">
-            <p className="text-zinc-400 text-lg">No data yet</p>
-            <p className="text-zinc-500 text-sm mt-2">Run a simulation to see recovery metrics</p>
-          </div>
-        ) : (
+        {batchId && cases.length > 0 && (
           <>
             <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <StatCard
-                label="Recovery Rate"
-                value={formatPercent(metrics.recovery_rate)}
+                label="Cases"
+                value={`${cases.length}`}
+                sub={allDone ? "all complete" : "processing..."}
+                accent="text-zinc-100"
+              />
+              <StatCard
+                label="Recovered"
+                value={`${recovered.length}`}
+                sub={`of ${cases.length}`}
                 accent="text-emerald-400"
+              />
+              <StatCard
+                label="Stopped"
+                value={`${stopped.length}`}
+                sub="non-recoverable"
+                accent="text-amber-400"
               />
               <StatCard
                 label="Amount Recovered"
-                value={formatAmount(metrics.total_amount_recovered)}
+                value={formatAmount(totalRecovered)}
+                sub={`of ${formatAmount(cases.reduce((s, c) => s + c.original_event.amount, 0))}`}
                 accent="text-emerald-400"
               />
-              <StatCard
-                label="Total Processed"
-                value={metrics.total_events_processed.toString()}
-                accent="text-zinc-100"
-              />
-              <StatCard
-                label="Avg Recovery Time"
-                value={metrics.avg_time_to_recovery_ms > 0 ? `${(metrics.avg_time_to_recovery_ms / 1000).toFixed(1)}s` : "—"}
-                accent="text-zinc-100"
-              />
             </section>
 
-            <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <MiniCard label="Recovered" value={metrics.total_recovered} color="bg-emerald-500" />
-              <MiniCard label="Stopped" value={metrics.total_stopped} color="bg-amber-500" />
-              <MiniCard label="Failed" value={metrics.total_failed} color="bg-red-500" />
-            </section>
-
-            <section>
-              <h2 className="text-lg font-medium mb-4">Recovery by Failure Type</h2>
-              <div className="rounded-lg border border-zinc-800 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-zinc-900">
-                    <tr>
-                      <th className="text-left px-4 py-3 font-medium text-zinc-400">Root Cause</th>
-                      <th className="text-right px-4 py-3 font-medium text-zinc-400">Count</th>
-                      <th className="text-right px-4 py-3 font-medium text-zinc-400">Recovered</th>
-                      <th className="text-right px-4 py-3 font-medium text-zinc-400">Rate</th>
-                      <th className="px-4 py-3 font-medium text-zinc-400">Recovery Rate</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800">
-                    {Object.entries(metrics.by_failure_type)
-                      .sort((a, b) => b[1].count - a[1].count)
-                      .map(([cause, data]) => (
-                        <tr key={cause} className="hover:bg-zinc-900/50">
-                          <td className="px-4 py-3 font-mono text-xs">{cause}</td>
-                          <td className="px-4 py-3 text-right">{data.count}</td>
-                          <td className="px-4 py-3 text-right text-emerald-400">{data.recovered}</td>
-                          <td className="px-4 py-3 text-right">{formatPercent(data.recovery_rate)}</td>
-                          <td className="px-4 py-3">
-                            <div className="w-full bg-zinc-800 rounded-full h-2">
-                              <div
-                                className="bg-emerald-500 h-2 rounded-full transition-all"
-                                style={{ width: `${data.recovery_rate * 100}%` }}
-                              />
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
+            <section className="space-y-4">
+              {cases.map((c) => {
+                const scenario = getScenarioForCase(c);
+                const entries = (auditMap[c.case_id] || []).sort(
+                  (a, b) =>
+                    STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage)
+                );
+                return (
+                  <CaseCard
+                    key={c.case_id}
+                    caseData={c}
+                    scenario={scenario}
+                    auditEntries={entries}
+                  />
+                );
+              })}
             </section>
           </>
+        )}
+
+        {running && cases.length === 0 && (
+          <div className="text-center py-20">
+            <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-blue-400" />
+            <p className="text-zinc-400 mt-4">
+              Starting recovery pipeline...
+            </p>
+          </div>
         )}
       </main>
     </div>
   );
 }
 
-function StatCard({ label, value, accent }: { label: string; value: string; accent: string }) {
+function CaseCard({
+  caseData,
+  scenario,
+  auditEntries,
+}: {
+  caseData: CaseData;
+  scenario?: ScenarioMeta;
+  auditEntries: AuditEntry[];
+}) {
+  const status = caseData.outcome.result;
+  const statusColor =
+    status === "recovered"
+      ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+      : status === "stopped"
+        ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+        : status === "failed"
+          ? "bg-red-500/20 text-red-400 border-red-500/30"
+          : "bg-blue-500/20 text-blue-400 border-blue-500/30";
+
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-5">
-      <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">{label}</p>
-      <p className={`mt-2 text-2xl font-semibold ${accent}`}>{value}</p>
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900 overflow-hidden">
+      <div className="px-5 py-4 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h3 className="font-semibold text-base">
+              {scenario?.label || caseData.diagnosis?.root_cause || "Processing..."}
+            </h3>
+            <span
+              className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${statusColor}`}
+            >
+              {status === "pending" ? "processing..." : status}
+            </span>
+          </div>
+          <p className="text-sm text-zinc-400 mt-1">
+            {scenario?.description || caseData.original_event.error_description}
+          </p>
+          <div className="flex items-center gap-4 mt-2 text-xs text-zinc-500">
+            <span>
+              {formatAmount(caseData.original_event.amount)}
+            </span>
+            <span className="uppercase">
+              {caseData.original_event.method}
+            </span>
+            <span>{caseData.original_event.customer.name}</span>
+            <span className="font-mono">
+              {caseData.original_event.error_code}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {auditEntries.length > 0 && (
+        <div className="border-t border-zinc-800 px-5 py-4">
+          <PipelineTimeline entries={auditEntries} caseData={caseData} />
+        </div>
+      )}
     </div>
   );
 }
 
-function MiniCard({ label, value, color }: { label: string; value: number; color: string }) {
+function PipelineTimeline({
+  entries,
+  caseData,
+}: {
+  entries: AuditEntry[];
+  caseData: CaseData;
+}) {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-4 flex items-center gap-3">
-      <div className={`h-3 w-3 rounded-full ${color}`} />
-      <div>
-        <p className="text-xs text-zinc-400">{label}</p>
-        <p className="text-lg font-semibold">{value}</p>
-      </div>
+    <div className="relative ml-1">
+      {entries.map((entry, i) => {
+        const isLast = i === entries.length - 1;
+        const isOutcome = entry.stage === "outcome";
+        const isSuccess =
+          entry.decision === "recovered" || entry.decision === "proceed" || entry.decision === "case_created";
+        const isStopped =
+          entry.decision === "stopped" ||
+          entry.decision === "stopped_after_failure" ||
+          entry.decision === "stopped_before_delayed_execution";
+
+        const dotColor = isOutcome
+          ? caseData.outcome.result === "recovered"
+            ? "bg-emerald-500"
+            : caseData.outcome.result === "stopped"
+              ? "bg-amber-500"
+              : "bg-red-500"
+          : isStopped
+            ? "bg-amber-500"
+            : isSuccess
+              ? "bg-emerald-500"
+              : "bg-blue-500";
+
+        return (
+          <div key={entry.audit_id} className="relative flex gap-4">
+            <div className="flex flex-col items-center">
+              <div
+                className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${dotColor}`}
+              />
+              {!isLast && (
+                <div className="w-px flex-1 bg-zinc-700 my-1" />
+              )}
+            </div>
+
+            <div className={`pb-5 min-w-0 flex-1 ${isLast ? "pb-0" : ""}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-zinc-200">
+                  {STAGE_LABELS[entry.stage] || entry.stage}
+                </span>
+                {entry.ai_used && (
+                  <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    AI
+                  </span>
+                )}
+                {!entry.ai_used && entry.stage !== "intake" && (
+                  <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400 border border-zinc-600/30">
+                    Rules
+                  </span>
+                )}
+                {entry.confidence !== undefined && entry.confidence !== null && (
+                  <span className="text-[10px] text-zinc-500">
+                    {(entry.confidence * 100).toFixed(0)}% confidence
+                  </span>
+                )}
+              </div>
+
+              <p className="text-sm text-zinc-300 mt-0.5">
+                <span className="font-mono text-xs text-zinc-400">
+                  {entry.decision}
+                </span>
+              </p>
+
+              <div className="mt-1.5 rounded bg-zinc-800/60 border border-zinc-700/50 px-3 py-2">
+                <p className="text-sm text-zinc-400 leading-relaxed">
+                  {entry.reasoning}
+                </p>
+                {entry.context && Object.keys(entry.context).length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    {Object.entries(entry.context).map(([k, v]) => (
+                      <span
+                        key={k}
+                        className="text-[11px] font-mono text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded"
+                      >
+                        {k}: {typeof v === "object" ? JSON.stringify(v) : String(v)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  accent: string;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-4">
+      <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
+        {label}
+      </p>
+      <p className={`mt-1 text-2xl font-semibold ${accent}`}>{value}</p>
+      <p className="text-xs text-zinc-500 mt-0.5">{sub}</p>
     </div>
   );
 }
