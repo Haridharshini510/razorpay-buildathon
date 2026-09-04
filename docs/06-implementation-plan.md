@@ -184,23 +184,23 @@
 
 ### Morning: Recovery Case Detail View
 
-- [~] Build Recovery Timeline page (`/recoveries/[id]`): *(PARTIAL — inline PipelineTimeline component on main page with AI/Rules badges and color-coded dots, but no dedicated page)*
+- [x] Build Recovery Timeline page (`/recoveries/[id]`):
   - Vertical timeline showing each step of the recovery
   - Event → Diagnosis → Stopping Check → Intervention → (Wait) → Execution → Outcome
   - Each step shows: timestamp, decision, reasoning
   - Badge: "AI" (blue) vs "Deterministic" (grey) for each step
   - Color-coded: green (success), red (failed), yellow (waiting), grey (stopped)
-- [ ] Build Recoveries List page (`/recoveries`):
+- [x] Build Recoveries List page (`/recoveries`):
   - Filterable table: by status, by root cause, by batch
   - Click row → timeline detail
-- [ ] Build Batch Detail page (`/batches/[id]`):
+- [x] Build Batch Detail page (`/batches/[id]`):
   - Summary stats for that batch
   - Distribution chart
   - List of recovery cases in batch with outcomes
 
 ### Afternoon: Audit Log + Observability
 
-- [ ] Build Audit Log page (`/audit`):
+- [x] Build Audit Log page (`/audit`):
   - Table: timestamp, case, stage, decision, AI badge
   - Filter by: stage, AI/non-AI, case_id
   - Expandable rows showing full reasoning + context
@@ -210,7 +210,7 @@
 - [x] Build "Run Simulation" button prominently in dashboard:
   - Click → modal with distribution config → starts batch → polls for results
   - Shows progress (X/50 processed) while running
-- [ ] Add graceful degradation indicator:
+- [x] Add graceful degradation indicator:
   - When fallback_used: true in a diagnosis → show "Fallback Mode" badge in UI
 
 ### End of Day 5 Checkpoint:

@@ -324,6 +324,11 @@ function CaseCard({
             >
               {status === "pending" ? "processing..." : status}
             </span>
+            {caseData.diagnosis?.fallback_used && (
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                Fallback Mode
+              </span>
+            )}
           </div>
           <p className="text-sm text-zinc-400 mt-1">
             {scenario?.description || caseData.original_event.error_description}
@@ -359,6 +364,7 @@ function PipelineTimeline({
   entries: AuditEntry[];
   caseData: CaseData;
 }) {
+  const fallbackUsed = caseData.diagnosis?.fallback_used ?? false;
   return (
     <div className="relative ml-1">
       {entries.map((entry, i) => {
@@ -407,6 +413,11 @@ function PipelineTimeline({
                 {!entry.ai_used && entry.stage !== "intake" && (
                   <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400 border border-zinc-600/30">
                     Rules
+                  </span>
+                )}
+                {fallbackUsed && entry.stage === "diagnosis" && (
+                  <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                    Fallback
                   </span>
                 )}
                 {entry.confidence !== undefined && entry.confidence !== null && (
